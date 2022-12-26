@@ -4,42 +4,14 @@ import java.net.Socket;
 
 public class Server {
 
-
     public static void main(String[] args) {
         try (ServerSocket server = new ServerSocket(8000)) {
-
             while (true)
-                try (Socket socket = server.accept();
-                     PrintWriter writer = new PrintWriter(socket.getOutputStream());
-                     BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream())))
+                try
                 {
-                    boolean headersFinished = false;
-                    int contentLength = -1;
-
-                    while(!headersFinished) {
-                        String line = reader.readLine();
-                        headersFinished = line.isEmpty();
-                        if (line.startsWith("Content-Length:")) {
-                            String cl = line.substring("Content-Length:".length()).trim();
-                            contentLength = Integer.parseInt(cl);
-                        }
-                    }
-                    char[] buf = new char[contentLength];  //<-- http body is here
-                    reader.read(buf);
-
-                    String colorId = new String(buf);
-
-                    System.out.println(SetColor(colorId));
-                    System.out.println("Request: " + colorId);
-
-                    writer.println("HTTP/1.1 200 OK");
-                    writer.println("Content-Type: text/html; charset=utf-8");
-                    writer.println("Access-Control-Allow-Origin: *");
-                    writer.println();
-                    writer.println("{\"status\": \"SUCCESS\", \"TEXT\":\""+GetColorName(colorId, "Цвет успешно изменен на")+"\"}");
-                    writer.flush();
-
-                    System.out.println("Цвет успешно изменен");
+                    Socket socket = server.accept();
+                    ClientHandler clientHandler = new ClientHandler(socket);
+                    new Thread(clientHandler).start();
 
                 } catch (NullPointerException e) {
                     e.printStackTrace();
@@ -76,5 +48,85 @@ public class Server {
             case "8" -> "<span style=\'color: yellow\'>"+prefix+" жёлтый</span>";
             default -> "";
         };
+    }
+
+
+    private static class ClientHandler implements Runnable {
+        private final Socket socket;
+        private PrintWriter writer;
+        private BufferedReader reader;
+
+        ClientHandler(Socket socket) {
+            this.socket = socket;
+            try {
+                this.writer = new PrintWriter(socket.getOutputStream());
+                this.reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            } catch (IOException e) {
+                this.writer = null;
+                this.reader = null;
+            }
+        }
+
+        private void writeHttpHeaders() {
+            writer.println("HTTP/1.1 200 OK");
+            writer.println("Content-Type: text/html; charset=utf-8");
+            writer.println("Access-Control-Allow-Origin: *");
+            writer.println();
+        }
+
+        private void writeResult(String resultText) {
+            writer.println("{\"status\": \"SUCCESS\", \"TEXT\":\""+resultText+"\"}");
+
+        }
+
+        private void flush() {
+            writer.flush();
+        }
+
+        private void closeConnection() throws IOException {
+            reader.close();
+            writer.close();
+            socket.close();
+        }
+
+        @Override
+        public void run() {
+            try {
+                if (this.writer == null || this.reader == null) {
+                    socket.close();
+                    return;
+                }
+
+                boolean headersFinished = false;
+                int contentLength = -1;
+
+                while(!headersFinished) {
+                    String line = reader.readLine();
+                    headersFinished = line.isEmpty();
+                    if (line.startsWith("Content-Length:")) {
+                        String cl = line.substring("Content-Length:".length()).trim();
+                        contentLength = Integer.parseInt(cl);
+                    }
+                }
+
+                Thread.sleep(1000);
+                char[] buf = new char[contentLength];  //<-- http body is here
+                reader.read(buf);
+
+                String colorId = new String(buf);
+
+                System.out.println(SetColor(colorId));
+                System.out.println("Request: " + colorId);
+
+                writeHttpHeaders();
+                writeResult(GetColorName(colorId, "Цвет успешно изменен на"));
+                flush();
+                closeConnection();
+
+                System.out.println("Цвет успешно изменен");
+            } catch (IOException | InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
     }
 }
